@@ -1,0 +1,25 @@
+{
+  "name": "farmers-bot",
+  "version": "1.0.0",
+  "main": "claimbot.js",
+  "license": "MIT",
+  "description": "Auto claiming bot for Farmers World",
+  "author": "Benjamin Wheeler <benjiewheeler@yandex.com>",
+  "private": true,
+  "scripts": {
+    "start": "node ."
+  },
+  "dependencies": {
+    "dotenv": "^10.0.0",
+    "eosjs": "^22.1.0",
+    "lodash": "^4.17.21",
+    "node-fetch": "^2.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^7.0.0",
+    "eslint-config-prettier": "^8.3.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "nodemon": "^2.0.14",
+    "prettier": "^2.4.1"
+  }
+}
