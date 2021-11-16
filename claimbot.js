@@ -28,7 +28,7 @@ const ATOMIC_ENDPOINTS = [
 ];
 
 const ANIMAL_FOOD = {
-    // animal_template: food_template
+	// animal_template: food_template
 	298597: 298593, // Baby Calf consumes Milk
 	298603: 318606, // Cow       consumes Barley
 	298607: 318606, // Dairy Cow consumes Barley
@@ -53,13 +53,12 @@ async function transact(config) {
 		});
 
 		const info = await rpc.get_info();
-		const refBlock = await rpc.get_block(info.head_block_num - 1);
-		const subId = refBlock.id.substr(16, 8);
+		const subId = info.head_block_id.substr(16, 8);
 		const prefix = parseInt(subId.substr(6, 2) + subId.substr(4, 2) + subId.substr(2, 2) + subId.substr(0, 2), 16);
 
 		const transaction = {
-			expiration: timePointSecToDate(dateToTimePointSec(refBlock.timestamp) + 3600),
-			ref_block_num: 65535 & refBlock.block_num,
+			expiration: timePointSecToDate(dateToTimePointSec(info.head_block_time) + 3600),
+			ref_block_num: 65535 & info.head_block_num,
 			ref_block_prefix: prefix,
 			actions: await accountAPI.serializeActions(config.actions),
 		};
@@ -122,7 +121,7 @@ async function fetchAnimls(account) {
 	return await fetchTable(account, "animals");
 }
 
-async function fetchBarley(account, index = 0) {
+async function fetchFood(account, index = 0) {
 	if (index >= ATOMIC_ENDPOINTS.length) {
 		return [];
 	}
@@ -136,7 +135,7 @@ async function fetchBarley(account, index = 0) {
 
 		return response.data.data;
 	} catch (error) {
-		return await fetchBarley(account, index + 1);
+		return await fetchFood(account, index + 1);
 	}
 }
 
@@ -213,7 +212,7 @@ async function feedAnimals(animals, food, account, privateKey) {
 			continue;
 		}
 
-		const foodItem = [...food].splice(foodItemIndex, 1);
+		const [foodItem] = [...food].splice(foodItemIndex, 1);
 		const delay = _.random(4, 10);
 
 		console.log(
@@ -275,16 +274,16 @@ async function runFeeding() {
 	console.log(`Found ${yellow(animals.length)} animals / ${yellow(feedables.length)} animals ready to feed`);
 
 	if (feedables.length > 0) {
-		console.log(`Fetching barley for account ${green(ACCOUNT_NAME)}`);
-		const barley = await fetchBarley(ACCOUNT_NAME);
-		console.log(`Found ${yellow(barley.length)} barley`);
+		console.log(`Fetching food from account ${green(ACCOUNT_NAME)}`);
+		const food = await fetchFood(ACCOUNT_NAME);
+		console.log(`Found ${yellow(food.length)} food`);
 
-		if (barley.length) {
-			if (feedables.length > barley.length) {
-				console.log(yellow("Warning: You don't have enough barley to feed all your animals"));
+		if (food.length) {
+			if (feedables.length > food.length) {
+				console.log(yellow("Warning: You don't have enough food to feed all your animals"));
 			}
 
-			await feedAnimals(feedables, barley, ACCOUNT_NAME, PRIVATE_KEY);
+			await feedAnimals(feedables, food, ACCOUNT_NAME, PRIVATE_KEY);
 		}
 	}
 }
