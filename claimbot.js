@@ -466,15 +466,6 @@ async function runTasks() {
 	const interval = parseInt(CHECK_INTERVAL) || 15;
 	console.log(`FW Bot initialization`);
 
-	console.log(`Fetching Animal configurations`);
-	Configs.animals = await fetchTable(null, "animals", 1);
-	Configs.animals
-		.filter(({ consumed_quantity }) => consumed_quantity > 0)
-		.forEach(({ template_id, consumed_card }) => (ANIMAL_FOOD[template_id] = consumed_card));
-
-	console.log(`Fetching Tool configurations`);
-	Configs.tools = await fetchTable(null, "toolconfs", 1);
-
 	if (!ACCOUNT_NAME) {
 		console.log(red("Input a valid ACCOUNT_NAME in .env"));
 		process.exit(0);
@@ -492,6 +483,15 @@ async function runTasks() {
 		console.log(red("Input a valid PRIVATE_KEY in .env"));
 		process.exit(0);
 	}
+
+	console.log(`Fetching Animal configurations`);
+	Configs.animals = await fetchTable(null, "animals", 1);
+	Configs.animals
+		.filter(({ consumed_quantity }) => consumed_quantity > 0)
+		.forEach(({ template_id, consumed_card }) => (ANIMAL_FOOD[template_id] = consumed_card));
+
+	console.log(`Fetching Tool configurations`);
+	Configs.tools = await fetchTable(null, "toolconfs", 1);
 
 	console.log(`Running every ${interval} minutes`);
 	console.log();
