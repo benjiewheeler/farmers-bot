@@ -4,9 +4,10 @@ const { JsonRpc } = require("eosjs/dist/eosjs-jsonrpc");
 const { JsSignatureProvider } = require("eosjs/dist/eosjs-jssig");
 const { PrivateKey } = require("eosjs/dist/eosjs-key-conversions");
 const { dateToTimePointSec, timePointSecToDate } = require("eosjs/dist/eosjs-serialize");
-const { yellow, green, red } = require("chalk");
+const { magenta, yellow, green, red } = require("chalk");
 const fetch = require("node-fetch");
 const axios = require("axios");
+const { TextEncoder, TextDecoder } = require("util");
 
 require("dotenv").config();
 
@@ -83,7 +84,7 @@ async function transact(config) {
 	}
 }
 
-async function fetchTable(account, table, index = 0) {
+async function fetchTable(account, table, tableIndex, index = 0) {
 	if (index >= WAX_ENDPOINTS.length) {
 		return [];
 	}
@@ -99,26 +100,30 @@ async function fetchTable(account, table, index = 0) {
 			table: table,
 			lower_bound: account,
 			upper_bound: account,
-			index_position: 2,
+			index_position: tableIndex,
 			key_type: "i64",
 			limit: 100,
 		});
 		return data.rows;
 	} catch (error) {
-		return await fetchCrops(account, index + 1);
+		return await fetchTable(account, table, tableIndex, index + 1);
 	}
 }
 
 async function fetchCrops(account) {
-	return await fetchTable(account, "crops");
+	return await fetchTable(account, "crops", 2);
 }
 
 async function fetchTools(account) {
-	return await fetchTable(account, "tools");
+	return await fetchTable(account, "tools", 2);
+}
+
+async function fetchAccount(account) {
+	return await fetchTable(account, "accounts", 1);
 }
 
 async function fetchAnimls(account) {
-	return await fetchTable(account, "animals");
+	return await fetchTable(account, "animals", 2);
 }
 
 async function fetchFood(account, index = 0) {
@@ -148,12 +153,21 @@ function makeCropAction(account, cropId) {
 	};
 }
 
-function makeToolAction(account, toolId) {
+function makeToolClaimAction(account, toolId) {
 	return {
 		account: "farmersworld",
 		name: "claim",
 		authorization: [{ actor: account, permission: "active" }],
 		data: { asset_id: toolId, owner: account },
+	};
+}
+
+function makeToolRepairAction(account, toolId) {
+	return {
+		account: "farmersworld",
+		name: "repair",
+		authorization: [{ actor: account, permission: "active" }],
+		data: { asset_id: toolId, asset_owner: account },
 	};
 }
 
@@ -166,103 +180,50 @@ function makeFeedingAction(account, animalId, foodId) {
 	};
 }
 
-async function claimCrops(crops, account, privateKey) {
-	console.log("Claiming Crops");
+async function repairTools() {
+	const { ACCOUNT_NAME, PRIVATE_KEY, REPAIR_THRESHOLD, DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+	const threshold = parseFloat(REPAIR_THRESHOLD) || 50;
 
-	for (let i = 0; i < crops.length; i++) {
-		const crop = crops[i];
-
-		const delay = _.random(4, 10);
-
-		console.log(`\tClaiming crop ${yellow(crop.asset_id)} ${green(crop.name)} (with a ${delay}s delay)`);
-		const actions = [makeCropAction(account, crop.asset_id)];
-
-		await waitFor(delay);
-		await transact({ account, privKeys: [privateKey], actions });
-	}
-}
-
-async function claimTools(tools, account, privateKey) {
-	console.log("Claiming Tools");
-
-	for (let i = 0; i < tools.length; i++) {
-		const tool = tools[i];
-
-		const delay = _.random(4, 10);
-
-		console.log(`\tClaiming with tool ${yellow(tool.asset_id)} ${green(tool.name)} (with a ${delay}s delay)`);
-		const actions = [makeToolAction(account, tool.asset_id)];
-
-		await waitFor(delay);
-		await transact({ account, privKeys: [privateKey], actions });
-	}
-}
-
-async function feedAnimals(animals, food, account, privateKey) {
-	console.log("Feeding Animals");
-
-	for (let i = 0; i < animals.length; i++) {
-		const animal = animals[i];
-		const foodItemIndex = [...food].findIndex(
-			item => parseInt(item.template.template_id) == ANIMAL_FOOD[animal.template_id]
-		);
-
-		if (foodItemIndex == -1) {
-			console.log(`\t${yellow("No compatible food found for")} ${green(animal.name)}`);
-			continue;
-		}
-
-		const [foodItem] = [...food].splice(foodItemIndex, 1);
-		const delay = _.random(4, 10);
-
-		console.log(
-			`\tFeeding ${yellow(animal.asset_id)} ${green(animal.name)} with ${foodItem.name} (${
-				foodItem.asset_id
-			}) (with a ${delay}s delay)`
-		);
-		const actions = [makeFeedingAction(account, animal.asset_id, foodItem.asset_id)];
-
-		await waitFor(delay);
-		await transact({ account, privKeys: [privateKey], actions });
-	}
-}
-
-async function runCrops() {
-	const { ACCOUNT_NAME, PRIVATE_KEY } = process.env;
-	console.log(`Fetching crops for account ${green(ACCOUNT_NAME)}`);
-	const crops = await fetchCrops(ACCOUNT_NAME);
-
-	const claimables = crops.filter(({ next_availability }) => {
-		const next = new Date(next_availability * 1e3);
-		return next.getTime() < Date.now();
-	});
-
-	console.log(`Found ${yellow(crops.length)} crops / ${yellow(claimables.length)} crops ready to claim`);
-
-	if (claimables.length > 0) {
-		await claimCrops(claimables, ACCOUNT_NAME, PRIVATE_KEY);
-	}
-}
-
-async function runTools() {
-	const { ACCOUNT_NAME, PRIVATE_KEY } = process.env;
 	console.log(`Fetching tools for account ${green(ACCOUNT_NAME)}`);
 	const tools = await fetchTools(ACCOUNT_NAME);
 
-	const claimables = tools.filter(({ next_availability }) => {
-		const next = new Date(next_availability * 1e3);
-		return next.getTime() < Date.now();
+	const repeairables = tools.filter(({ durability, current_durability }) => {
+		const percentage = 100 * (current_durability / durability);
+		return percentage < threshold;
 	});
 
-	console.log(`Found ${yellow(tools.length)} tools / ${yellow(claimables.length)} tools ready to claim`);
+	console.log(`Found ${yellow(tools.length)} tools / ${yellow(repeairables.length)} tools ready to be repaired`);
 
-	if (claimables.length > 0) {
-		await claimTools(claimables, ACCOUNT_NAME, PRIVATE_KEY);
+	if (repeairables.length > 0) {
+		console.log("Repairing Tools");
+
+		for (let i = 0; i < repeairables.length; i++) {
+			const tool = repeairables[i];
+
+			const delay = _.random(delayMin, delayMax);
+
+			console.log(
+				`\tRepairing tool ${yellow(tool.asset_id)}`,
+				`(for ${green(tool.type)})`,
+				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
+				magenta(`(${Math.round((tool.current_durability / tool.durability) * 100)}%)`),
+				`(after a ${delay}s delay)`
+			);
+			const actions = [makeToolRepairAction(ACCOUNT_NAME, tool.asset_id)];
+
+			await waitFor(delay);
+			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+		}
 	}
 }
 
-async function runFeeding() {
-	const { ACCOUNT_NAME, PRIVATE_KEY } = process.env;
+async function feedAnimals() {
+	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+
 	console.log(`Fetching animals for account ${green(ACCOUNT_NAME)}`);
 	const animals = await fetchAnimls(ACCOUNT_NAME);
 
@@ -283,19 +244,113 @@ async function runFeeding() {
 				console.log(yellow("Warning: You don't have enough food to feed all your animals"));
 			}
 
-			await feedAnimals(feedables, food, ACCOUNT_NAME, PRIVATE_KEY);
+			console.log("Feeding Animals");
+
+			for (let i = 0; i < feedables.length; i++) {
+				const animal = feedables[i];
+				const foodItemIndex = [...food].findIndex(
+					item => parseInt(item.template.template_id) == ANIMAL_FOOD[animal.template_id]
+				);
+
+				if (foodItemIndex == -1) {
+					console.log(`\t${yellow("No compatible food found for")} ${green(animal.name)}`);
+					continue;
+				}
+
+				const [foodItem] = [...food].splice(foodItemIndex, 1);
+				const delay = _.random(delayMin, delayMax);
+
+				console.log(
+					`\tFeeding ${yellow(animal.asset_id)} ${green(animal.name)} with ${foodItem.name} (${
+						foodItem.asset_id
+					}) (after a ${delay}s delay)`
+				);
+				const actions = [makeFeedingAction(ACCOUNT_NAME, animal.asset_id, foodItem.asset_id)];
+
+				await waitFor(delay);
+				await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+			}
 		}
 	}
 }
 
-async function runAll() {
-	await runTools();
+async function claimCrops() {
+	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+
+	console.log(`Fetching crops for account ${green(ACCOUNT_NAME)}`);
+	const crops = await fetchCrops(ACCOUNT_NAME);
+
+	const claimables = crops.filter(({ next_availability }) => {
+		const next = new Date(next_availability * 1e3);
+		return next.getTime() < Date.now();
+	});
+
+	console.log(`Found ${yellow(crops.length)} crops / ${yellow(claimables.length)} crops ready to claim`);
+
+	if (claimables.length > 0) {
+		console.log("Claiming Crops");
+
+		for (let i = 0; i < claimables.length; i++) {
+			const crop = claimables[i];
+
+			const delay = _.random(delayMin, delayMax);
+
+			console.log(`\tClaiming crop ${yellow(crop.asset_id)} ${green(crop.name)} (after a ${delay}s delay)`);
+			const actions = [makeCropAction(ACCOUNT_NAME, crop.asset_id)];
+
+			await waitFor(delay);
+			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+		}
+	}
+}
+
+async function useTools() {
+	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+
+	console.log(`Fetching tools for account ${green(ACCOUNT_NAME)}`);
+	const tools = await fetchTools(ACCOUNT_NAME);
+
+	const claimables = tools.filter(({ next_availability }) => {
+		const next = new Date(next_availability * 1e3);
+		return next.getTime() < Date.now();
+	});
+
+	console.log(`Found ${yellow(tools.length)} tools / ${yellow(claimables.length)} tools ready to claim`);
+
+	if (claimables.length > 0) {
+		console.log("Claiming Tools");
+
+		for (let i = 0; i < claimables.length; i++) {
+			const tool = claimables[i];
+
+			const delay = _.random(delayMin, delayMax);
+
+			console.log(
+				`\tClaiming with tool ${yellow(tool.asset_id)} (for ${green(tool.type)}) (after a ${delay}s delay)`
+			);
+			const actions = [makeToolClaimAction(ACCOUNT_NAME, tool.asset_id)];
+
+			await waitFor(delay);
+			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+		}
+	}
+}
+
+async function runTasks() {
+	await repairTools();
 	console.log(); // just for clarity
 
-	await runCrops();
+	await useTools();
 	console.log(); // just for clarity
 
-	await runFeeding();
+	await claimCrops();
+	console.log(); // just for clarity
+
+	await feedAnimals();
 	console.log(); // just for clarity
 }
 
@@ -303,10 +358,12 @@ async function runAll() {
 	const { ACCOUNT_NAME, PRIVATE_KEY, CHECK_INTERVAL } = process.env;
 	const interval = parseInt(CHECK_INTERVAL) || 5;
 	console.log(`FW Bot initialization`);
+
 	if (!ACCOUNT_NAME) {
 		console.log(red("Input a valid ACCOUNT_NAME in .env"));
 		process.exit(0);
 	}
+
 	if (!PRIVATE_KEY) {
 		console.log(red("Input a valid PRIVATE_KEY in .env"));
 		process.exit(0);
@@ -323,7 +380,7 @@ async function runAll() {
 	console.log(`Running every ${interval} minutes`);
 	console.log();
 
-	runAll();
+	runTasks();
 
-	setInterval(() => runAll(), interval * 60e3);
+	setInterval(() => runTasks(), interval * 60e3);
 })();
