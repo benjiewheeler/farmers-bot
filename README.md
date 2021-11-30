@@ -14,13 +14,21 @@ Auto farming bot for Farmers World
 * NodeJS (you can install it from [here](https://nodejs.org/en/download/))
 
 ## Usage
-1. clone this repo using `git clone`
-    *  or download it as a zip file
+### Installation
+###### *(if you haven't installed it before)*
+1. clone this repo using `git clone https://github.com/benjiewheeler/farmers-bot`
+    *  or download it as a [zip](https://github.com/benjiewheeler/farmers-bot/archive/refs/heads/master.zip) file
 2. in a command line window
     * cd into the directory where you cloned/unzipped the repo
     * install the dependencies by typing `npm install`
 3. rename `.env.sample` to `.env` and change it's content accordingly
 4. run the bot by typing `npm run start`
+
+### Update
+###### *(if you already installed it before)*
+1. pull this repo using `git pull origin master`
+    *  or download it as a [zip](https://github.com/benjiewheeler/farmers-bot/archive/refs/heads/master.zip) file (and unzip it over the previous folder overwriting the existing files)
+2. (continue from step 2 in the installation guied above)
 
 ## Disclaimer
 The use of automated farming tools (AKA bots) is not allowed by Farmers World, the author of this software is not responsible should if your accounts gets banned by Farmers World.
