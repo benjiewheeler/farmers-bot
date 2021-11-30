@@ -1,17 +1,17 @@
-const _ = require("lodash");
+const axios = require("axios");
+const { cyan, green, magenta, red, yellow } = require("chalk");
 const { Api } = require("eosjs/dist/eosjs-api");
 const { JsonRpc } = require("eosjs/dist/eosjs-jsonrpc");
 const { JsSignatureProvider } = require("eosjs/dist/eosjs-jssig");
 const { PrivateKey } = require("eosjs/dist/eosjs-key-conversions");
 const { dateToTimePointSec, timePointSecToDate } = require("eosjs/dist/eosjs-serialize");
-const { magenta, yellow, green, red } = require("chalk");
+const _ = require("lodash");
 const fetch = require("node-fetch");
-const axios = require("axios");
-const { TextEncoder, TextDecoder } = require("util");
+const { TextDecoder, TextEncoder } = require("util");
 
 require("dotenv").config();
 
-const WAX_ENDPOINTS = [
+const WAX_ENDPOINTS = _.shuffle([
 	"https://api.wax.greeneosio.com",
 	"https://api.waxsweden.org",
 	"https://wax.cryptolions.io",
@@ -19,14 +19,14 @@ const WAX_ENDPOINTS = [
 	"https://api-wax.eosarabia.net",
 	"https://wax.greymass.com",
 	"https://wax.pink.gg",
-];
+]);
 
-const ATOMIC_ENDPOINTS = [
+const ATOMIC_ENDPOINTS = _.shuffle([
 	"https://aa.wax.blacklusion.io",
 	"https://wax-atomic-api.eosphere.io",
 	"https://wax.api.atomicassets.io",
 	"https://wax.blokcrafters.io",
-];
+]);
 
 const ANIMAL_FOOD = {
 	// animal_template: food_template
@@ -37,13 +37,31 @@ const ANIMAL_FOOD = {
 	298614: 318606, // Chicken   consumes Barley
 };
 
+const Configs = {
+	WAXEndpoints: [...WAX_ENDPOINTS],
+	atomicEndpoints: [...ATOMIC_ENDPOINTS],
+	animals: [],
+	tools: [],
+};
+
+async function shuffleEndpoints() {
+	// shuffle endpoints to avoid spamming a single one
+	Configs.WAXEndpoints = _.shuffle(WAX_ENDPOINTS);
+	Configs.atomicEndpoints = _.shuffle(ATOMIC_ENDPOINTS);
+}
+
+/**
+ *
+ * @param {number} t in seconds
+ * @returns {Promise<void>}
+ */
 async function waitFor(t) {
 	return new Promise(resolve => setTimeout(() => resolve(), t * 1e3));
 }
 
 async function transact(config) {
 	try {
-		const endpoint = _.sample(WAX_ENDPOINTS);
+		const endpoint = _.sample(Configs.WAXEndpoints);
 		const rpc = new JsonRpc(endpoint, { fetch });
 
 		const accountAPI = new Api({
@@ -77,33 +95,40 @@ async function transact(config) {
 		const pushArgs = { ...accountSignature };
 		const result = await accountAPI.pushSignedTransaction(pushArgs);
 
-		return { success: true, result };
+		console.log(green(result.transaction_id));
 	} catch (error) {
 		console.log(red(error.message));
-		return { success: false, error };
 	}
 }
 
 async function fetchTable(account, table, tableIndex, index = 0) {
-	if (index >= WAX_ENDPOINTS.length) {
+	if (index >= Configs.WAXEndpoints.length) {
 		return [];
 	}
 
 	try {
-		const endpoint = WAX_ENDPOINTS[index];
+		const endpoint = Configs.WAXEndpoints[index];
 		const rpc = new JsonRpc(endpoint, { fetch });
 
-		const data = await rpc.get_table_rows({
-			json: true,
-			code: "farmersworld",
-			scope: "farmersworld",
-			table: table,
-			lower_bound: account,
-			upper_bound: account,
-			index_position: tableIndex,
-			key_type: "i64",
-			limit: 100,
-		});
+		const data = await Promise.race([
+			rpc.get_table_rows({
+				json: true,
+				code: "farmersworld",
+				scope: "farmersworld",
+				table: table,
+				lower_bound: account,
+				upper_bound: account,
+				index_position: tableIndex,
+				key_type: "i64",
+				limit: 100,
+			}),
+			waitFor(5).then(() => null),
+		]);
+
+		if (!data) {
+			throw new Error();
+		}
+
 		return data.rows;
 	} catch (error) {
 		return await fetchTable(account, table, tableIndex, index + 1);
@@ -127,12 +152,12 @@ async function fetchAnimls(account) {
 }
 
 async function fetchFood(account, index = 0) {
-	if (index >= ATOMIC_ENDPOINTS.length) {
+	if (index >= Configs.atomicEndpoints.length) {
 		return [];
 	}
 
 	try {
-		const endpoint = ATOMIC_ENDPOINTS[index];
+		const endpoint = Configs.atomicEndpoints[index];
 		const response = await axios.get(`${endpoint}/atomicassets/v1/assets`, {
 			params: { owner: account, collection_name: "farmersworld", schema_name: "foods", page: 1, limit: 10 },
 			timeout: 5e3,
@@ -180,13 +205,69 @@ function makeFeedingAction(account, animalId, foodId) {
 	};
 }
 
+function makeRecoverAction(account, energy) {
+	return {
+		account: "farmersworld",
+		name: "recover",
+		authorization: [{ actor: account, permission: "active" }],
+		data: { energy_recovered: energy, owner: account },
+	};
+}
+
+async function recoverEnergy() {
+	shuffleEndpoints();
+
+	const { ACCOUNT_NAME, PRIVATE_KEY, RECOVER_THRESHOLD, MAX_FOOD_CONSUMPTION, DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+	const maxConsumption = parseFloat(MAX_FOOD_CONSUMPTION) || 100;
+	const threshold = parseFloat(RECOVER_THRESHOLD) || 50;
+
+	console.log(`Fetching account ${cyan(ACCOUNT_NAME)}`);
+	const [account] = await fetchAccount(ACCOUNT_NAME);
+
+	if (!account) {
+		console.log(`${red("Error")} Account ${cyan(ACCOUNT_NAME)} not found`);
+		return;
+	}
+
+	const { energy, max_energy, balances } = account;
+	const percentage = 100 * (energy / max_energy);
+
+	if (percentage < threshold) {
+		const foodBalance = parseFloat(balances.find(b => b.includes("FOOD"))) || 0;
+
+		if (foodBalance < 0.2) {
+			console.log(`${yellow("Warning")} Account ${cyan(ACCOUNT_NAME)} doesn't have food to recover energy`);
+			return;
+		}
+
+		const energyNeeded = Math.min(max_energy - energy, Math.floor(Math.min(maxConsumption, foodBalance) * 5));
+		const delay = _.round(_.random(delayMin, delayMax, true), 2);
+
+		console.log(
+			`\tRecovering ${yellow(energyNeeded)} energy`,
+			`by consuming ${yellow(energyNeeded / 5)} FOOD`,
+			`(energy ${yellow(energy)} / ${yellow(max_energy)})`,
+			magenta(`(${_.round((energy / max_energy) * 100, 2)}%)`),
+			`(after a ${Math.round(delay)}s delay)`
+		);
+		const actions = [makeRecoverAction(ACCOUNT_NAME, energyNeeded)];
+
+		await waitFor(delay);
+		await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+	}
+}
+
 async function repairTools() {
+	shuffleEndpoints();
+
 	const { ACCOUNT_NAME, PRIVATE_KEY, REPAIR_THRESHOLD, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 	const threshold = parseFloat(REPAIR_THRESHOLD) || 50;
 
-	console.log(`Fetching tools for account ${green(ACCOUNT_NAME)}`);
+	console.log(`Fetching tools for account ${cyan(ACCOUNT_NAME)}`);
 	const tools = await fetchTools(ACCOUNT_NAME);
 
 	const repeairables = tools.filter(({ durability, current_durability }) => {
@@ -201,15 +282,17 @@ async function repairTools() {
 
 		for (let i = 0; i < repeairables.length; i++) {
 			const tool = repeairables[i];
+			const toolInfo = Configs.tools.find(t => t.template_id == tool.template_id);
 
-			const delay = _.random(delayMin, delayMax);
+			const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
 			console.log(
-				`\tRepairing tool ${yellow(tool.asset_id)}`,
-				`(for ${green(tool.type)})`,
+				`\tRepairing`,
+				`(${yellow(tool.asset_id)})`,
+				green(`${toolInfo.rarity} ${toolInfo.template_name}`),
 				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
-				magenta(`(${Math.round((tool.current_durability / tool.durability) * 100)}%)`),
-				`(after a ${delay}s delay)`
+				magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
+				`(after a ${Math.round(delay)}s delay)`
 			);
 			const actions = [makeToolRepairAction(ACCOUNT_NAME, tool.asset_id)];
 
@@ -220,11 +303,13 @@ async function repairTools() {
 }
 
 async function feedAnimals() {
+	shuffleEndpoints();
+
 	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching animals for account ${green(ACCOUNT_NAME)}`);
+	console.log(`Fetching animals for account ${cyan(ACCOUNT_NAME)}`);
 	const animals = await fetchAnimls(ACCOUNT_NAME);
 
 	const feedables = animals.filter(({ next_availability }) => {
@@ -235,7 +320,7 @@ async function feedAnimals() {
 	console.log(`Found ${yellow(animals.length)} animals / ${yellow(feedables.length)} animals ready to feed`);
 
 	if (feedables.length > 0) {
-		console.log(`Fetching food from account ${green(ACCOUNT_NAME)}`);
+		console.log(`Fetching food from account ${cyan(ACCOUNT_NAME)}`);
 		const food = await fetchFood(ACCOUNT_NAME);
 		console.log(`Found ${yellow(food.length)} food`);
 
@@ -248,6 +333,8 @@ async function feedAnimals() {
 
 			for (let i = 0; i < feedables.length; i++) {
 				const animal = feedables[i];
+				const animalInfo = Configs.animals.find(t => t.template_id == animal.template_id);
+
 				const foodItemIndex = [...food].findIndex(
 					item => parseInt(item.template.template_id) == ANIMAL_FOOD[animal.template_id]
 				);
@@ -258,12 +345,14 @@ async function feedAnimals() {
 				}
 
 				const [foodItem] = [...food].splice(foodItemIndex, 1);
-				const delay = _.random(delayMin, delayMax);
+				const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
 				console.log(
-					`\tFeeding ${yellow(animal.asset_id)} ${green(animal.name)} with ${foodItem.name} (${
-						foodItem.asset_id
-					}) (after a ${delay}s delay)`
+					`\tFeeding animal`,
+					`(${yellow(foodItem.asset_id)})`,
+					green(`${animalInfo.name}`),
+					`with ${foodItem.name} (${foodItem.asset_id})`,
+					`(after a ${Math.round(delay)}s delay)`
 				);
 				const actions = [makeFeedingAction(ACCOUNT_NAME, animal.asset_id, foodItem.asset_id)];
 
@@ -275,11 +364,13 @@ async function feedAnimals() {
 }
 
 async function claimCrops() {
+	shuffleEndpoints();
+
 	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching crops for account ${green(ACCOUNT_NAME)}`);
+	console.log(`Fetching crops for account ${cyan(ACCOUNT_NAME)}`);
 	const crops = await fetchCrops(ACCOUNT_NAME);
 
 	const claimables = crops.filter(({ next_availability }) => {
@@ -295,9 +386,14 @@ async function claimCrops() {
 		for (let i = 0; i < claimables.length; i++) {
 			const crop = claimables[i];
 
-			const delay = _.random(delayMin, delayMax);
+			const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
-			console.log(`\tClaiming crop ${yellow(crop.asset_id)} ${green(crop.name)} (after a ${delay}s delay)`);
+			console.log(
+				`\tClaiming crop`,
+				`(${yellow(crop.asset_id)})`,
+				green(`${crop.name}`),
+				`(after a ${Math.round(delay)}s delay)`
+			);
 			const actions = [makeCropAction(ACCOUNT_NAME, crop.asset_id)];
 
 			await waitFor(delay);
@@ -307,11 +403,13 @@ async function claimCrops() {
 }
 
 async function useTools() {
+	shuffleEndpoints();
+
 	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching tools for account ${green(ACCOUNT_NAME)}`);
+	console.log(`Fetching tools for account ${cyan(ACCOUNT_NAME)}`);
 	const tools = await fetchTools(ACCOUNT_NAME);
 
 	const claimables = tools.filter(({ next_availability }) => {
@@ -326,12 +424,18 @@ async function useTools() {
 
 		for (let i = 0; i < claimables.length; i++) {
 			const tool = claimables[i];
+			const toolInfo = Configs.tools.find(t => t.template_id == tool.template_id);
 
-			const delay = _.random(delayMin, delayMax);
+			const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
 			console.log(
-				`\tClaiming with tool ${yellow(tool.asset_id)} (for ${green(tool.type)}) (after a ${delay}s delay)`
+				`\tClaiming with`,
+				`(${yellow(tool.asset_id)})`,
+				green(`${toolInfo.rarity} ${toolInfo.template_name}`),
+				`(for ${green(tool.type)})`,
+				`(after a ${Math.round(delay)}s delay)`
 			);
+
 			const actions = [makeToolClaimAction(ACCOUNT_NAME, tool.asset_id)];
 
 			await waitFor(delay);
@@ -341,6 +445,9 @@ async function useTools() {
 }
 
 async function runTasks() {
+	await recoverEnergy();
+	console.log(); // just for clarity
+
 	await repairTools();
 	console.log(); // just for clarity
 
@@ -354,10 +461,19 @@ async function runTasks() {
 	console.log(); // just for clarity
 }
 
-(() => {
+(async () => {
 	const { ACCOUNT_NAME, PRIVATE_KEY, CHECK_INTERVAL } = process.env;
-	const interval = parseInt(CHECK_INTERVAL) || 5;
+	const interval = parseInt(CHECK_INTERVAL) || 15;
 	console.log(`FW Bot initialization`);
+
+	console.log(`Fetching Animal configurations`);
+	Configs.animals = await fetchTable(null, "animals", 1);
+	Configs.animals
+		.filter(({ consumed_quantity }) => consumed_quantity > 0)
+		.forEach(({ template_id, consumed_card }) => (ANIMAL_FOOD[template_id] = consumed_card));
+
+	console.log(`Fetching Tool configurations`);
+	Configs.tools = await fetchTable(null, "toolconfs", 1);
 
 	if (!ACCOUNT_NAME) {
 		console.log(red("Input a valid ACCOUNT_NAME in .env"));
