@@ -201,7 +201,7 @@ function makeFeedingAction(account, animalId, foodId) {
 		account: "atomicassets",
 		name: "transfer",
 		authorization: [{ actor: account, permission: "active" }],
-		data: { asset_ids: [animalId], from: account, memo: `feed_animal:${foodId}`, to: "farmersworld" },
+		data: { asset_ids: [foodId], from: account, memo: `feed_animal:${animalId}`, to: "farmersworld" },
 	};
 }
 
@@ -349,9 +349,9 @@ async function feedAnimals() {
 
 				console.log(
 					`\tFeeding animal`,
-					`(${yellow(foodItem.asset_id)})`,
+					`(${yellow(animal.asset_id)})`,
 					green(`${animalInfo.name}`),
-					`with ${foodItem.name} (${foodItem.asset_id})`,
+					`with ${foodItem.name} (${yellow(foodItem.asset_id)})`,
 					`(after a ${Math.round(delay)}s delay)`
 				);
 				const actions = [makeFeedingAction(ACCOUNT_NAME, animal.asset_id, foodItem.asset_id)];
@@ -425,6 +425,16 @@ async function useTools() {
 		for (let i = 0; i < claimables.length; i++) {
 			const tool = claimables[i];
 			const toolInfo = Configs.tools.find(t => t.template_id == tool.template_id);
+
+			if (toolInfo.durability_consumed >= tool.current_durability) {
+				console.log(
+					`\t${yellow("Warning")} Tool`,
+					`(${yellow(tool.asset_id)})`,
+					green(`${toolInfo.rarity} ${toolInfo.template_name}`),
+					`does not have enough durability`
+				);
+				continue;
+			}
 
 			const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
