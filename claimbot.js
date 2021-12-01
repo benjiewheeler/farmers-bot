@@ -344,7 +344,7 @@ async function feedAnimals() {
 					continue;
 				}
 
-				const [foodItem] = [...food].splice(foodItemIndex, 1);
+				const [foodItem] = food.splice(foodItemIndex, 1);
 				const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
 				console.log(
