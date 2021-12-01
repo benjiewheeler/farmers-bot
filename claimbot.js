@@ -443,6 +443,8 @@ async function useTools() {
 				`(${yellow(tool.asset_id)})`,
 				green(`${toolInfo.rarity} ${toolInfo.template_name}`),
 				`(for ${green(tool.type)})`,
+				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
+				magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
 				`(after a ${Math.round(delay)}s delay)`
 			);
 
