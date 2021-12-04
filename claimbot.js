@@ -232,31 +232,31 @@ function makeRecoverAction(account, energy) {
 	};
 }
 
-async function recoverEnergy() {
+async function recoverEnergy(account, privKey) {
 	shuffleEndpoints();
 
-	const { ACCOUNT_NAME, PRIVATE_KEY, RECOVER_THRESHOLD, MAX_FOOD_CONSUMPTION, DELAY_MIN, DELAY_MAX } = process.env;
+	const { RECOVER_THRESHOLD, MAX_FOOD_CONSUMPTION, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 	const maxConsumption = parseFloat(MAX_FOOD_CONSUMPTION) || 100;
 	const threshold = parseFloat(RECOVER_THRESHOLD) || 50;
 
-	console.log(`Fetching account ${cyan(ACCOUNT_NAME)}`);
-	const [account] = await fetchAccount(ACCOUNT_NAME);
+	console.log(`Fetching account ${cyan(account)}`);
+	const [accountInfo] = await fetchAccount(account);
 
-	if (!account) {
-		console.log(`${red("Error")} Account ${cyan(ACCOUNT_NAME)} not found`);
+	if (!accountInfo) {
+		console.log(`${red("Error")} Account ${cyan(account)} not found`);
 		return;
 	}
 
-	const { energy, max_energy, balances } = account;
+	const { energy, max_energy, balances } = accountInfo;
 	const percentage = 100 * (energy / max_energy);
 
 	if (percentage < threshold) {
 		const foodBalance = parseFloat(balances.find(b => b.includes("FOOD"))) || 0;
 
 		if (foodBalance < 0.2) {
-			console.log(`${yellow("Warning")} Account ${cyan(ACCOUNT_NAME)} doesn't have food to recover energy`);
+			console.log(`${yellow("Warning")} Account ${cyan(account)} doesn't have food to recover energy`);
 			return;
 		}
 
@@ -270,23 +270,23 @@ async function recoverEnergy() {
 			magenta(`(${_.round((energy / max_energy) * 100, 2)}%)`),
 			`(after a ${Math.round(delay)}s delay)`
 		);
-		const actions = [makeRecoverAction(ACCOUNT_NAME, energyNeeded)];
+		const actions = [makeRecoverAction(account, energyNeeded)];
 
 		await waitFor(delay);
-		await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+		await transact({ account, privKeys: [privKey], actions });
 	}
 }
 
-async function repairTools() {
+async function repairTools(account, privKey) {
 	shuffleEndpoints();
 
-	const { ACCOUNT_NAME, PRIVATE_KEY, REPAIR_THRESHOLD, DELAY_MIN, DELAY_MAX } = process.env;
+	const { REPAIR_THRESHOLD, DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 	const threshold = parseFloat(REPAIR_THRESHOLD) || 50;
 
-	console.log(`Fetching tools for account ${cyan(ACCOUNT_NAME)}`);
-	const tools = await fetchTools(ACCOUNT_NAME);
+	console.log(`Fetching tools for account ${cyan(account)}`);
+	const tools = await fetchTools(account);
 
 	const repeairables = tools.filter(({ durability, current_durability }) => {
 		const percentage = 100 * (current_durability / durability);
@@ -312,23 +312,23 @@ async function repairTools() {
 				magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
 				`(after a ${Math.round(delay)}s delay)`
 			);
-			const actions = [makeToolRepairAction(ACCOUNT_NAME, tool.asset_id)];
+			const actions = [makeToolRepairAction(account, tool.asset_id)];
 
 			await waitFor(delay);
-			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+			await transact({ account, privKeys: [privKey], actions });
 		}
 	}
 }
 
-async function feedAnimals() {
+async function feedAnimals(account, privKey) {
 	shuffleEndpoints();
 
-	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const { DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching animals for account ${cyan(ACCOUNT_NAME)}`);
-	const animals = await fetchAnimls(ACCOUNT_NAME);
+	console.log(`Fetching animals for account ${cyan(account)}`);
+	const animals = await fetchAnimls(account);
 
 	const feedables = animals.filter(({ next_availability }) => {
 		const next = new Date(next_availability * 1e3);
@@ -338,8 +338,8 @@ async function feedAnimals() {
 	console.log(`Found ${yellow(animals.length)} animals / ${yellow(feedables.length)} animals ready to feed`);
 
 	if (feedables.length > 0) {
-		console.log(`Fetching food from account ${cyan(ACCOUNT_NAME)}`);
-		const food = await fetchFood(ACCOUNT_NAME);
+		console.log(`Fetching food from account ${cyan(account)}`);
+		const food = await fetchFood(account);
 		console.log(`Found ${yellow(food.length)} food`);
 
 		if (food.length) {
@@ -372,24 +372,24 @@ async function feedAnimals() {
 					`with ${foodItem.name} (${yellow(foodItem.asset_id)})`,
 					`(after a ${Math.round(delay)}s delay)`
 				);
-				const actions = [makeFeedingAction(ACCOUNT_NAME, animal.asset_id, foodItem.asset_id)];
+				const actions = [makeFeedingAction(account, animal.asset_id, foodItem.asset_id)];
 
 				await waitFor(delay);
-				await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+				await transact({ account, privKeys: [privKey], actions });
 			}
 		}
 	}
 }
 
-async function claimCrops() {
+async function claimCrops(account, privKey) {
 	shuffleEndpoints();
 
-	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const { DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching crops for account ${cyan(ACCOUNT_NAME)}`);
-	const crops = await fetchCrops(ACCOUNT_NAME);
+	console.log(`Fetching crops for account ${cyan(account)}`);
+	const crops = await fetchCrops(account);
 
 	const claimables = crops.filter(({ next_availability }) => {
 		const next = new Date(next_availability * 1e3);
@@ -412,23 +412,23 @@ async function claimCrops() {
 				green(`${crop.name}`),
 				`(after a ${Math.round(delay)}s delay)`
 			);
-			const actions = [makeCropAction(ACCOUNT_NAME, crop.asset_id)];
+			const actions = [makeCropAction(account, crop.asset_id)];
 
 			await waitFor(delay);
-			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+			await transact({ account, privKeys: [privKey], actions });
 		}
 	}
 }
 
-async function useTools() {
+async function useTools(account, privKey) {
 	shuffleEndpoints();
 
-	const { ACCOUNT_NAME, PRIVATE_KEY, DELAY_MIN, DELAY_MAX } = process.env;
+	const { DELAY_MIN, DELAY_MAX } = process.env;
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
-	console.log(`Fetching tools for account ${cyan(ACCOUNT_NAME)}`);
-	const tools = await fetchTools(ACCOUNT_NAME);
+	console.log(`Fetching tools for account ${cyan(account)}`);
+	const tools = await fetchTools(account);
 
 	console.log(`Found ${yellow(tools.length)} tools`);
 
@@ -470,52 +470,67 @@ async function useTools() {
 			`(after a ${Math.round(delay)}s delay)`
 		);
 
-		const actions = [makeToolClaimAction(ACCOUNT_NAME, tool.asset_id)];
+		const actions = [makeToolClaimAction(account, tool.asset_id)];
 
 		await waitFor(delay);
-		await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+		await transact({ account, privKeys: [privKey], actions });
 	}
 }
 
-async function runTasks() {
-	await recoverEnergy();
+async function runTasks(account, privKey) {
+	await recoverEnergy(account, privKey);
 	console.log(); // just for clarity
 
-	await repairTools();
+	await repairTools(account, privKey);
 	console.log(); // just for clarity
 
-	await useTools();
+	await useTools(account, privKey);
 	console.log(); // just for clarity
 
-	await claimCrops();
+	await claimCrops(account, privKey);
 	console.log(); // just for clarity
 
-	await feedAnimals();
+	await feedAnimals(account, privKey);
 	console.log(); // just for clarity
+}
+
+async function runAccounts(accounts) {
+	for (let i = 0; i < accounts.length; i++) {
+		const { account, privKey } = accounts[i];
+		await runTasks(account, privKey);
+	}
 }
 
 (async () => {
-	const { ACCOUNT_NAME, PRIVATE_KEY, CHECK_INTERVAL } = process.env;
-	const interval = parseInt(CHECK_INTERVAL) || 15;
 	console.log(`FW Bot initialization`);
 
-	if (!ACCOUNT_NAME) {
-		console.log(red("Input a valid ACCOUNT_NAME in .env"));
-		process.exit(0);
-	}
+	const accounts = Object.entries(process.env)
+		.map(([k, v]) => {
+			if (k.startsWith("ACCOUNT_NAME")) {
+				const id = k.replace("ACCOUNT_NAME", "");
+				const key = process.env[`PRIVATE_KEY${id}`];
+				if (!key) {
+					console.log(red(`Account ${v} does not have a PRIVATE_KEY${id} in .env`));
+					return;
+				}
 
-	if (!PRIVATE_KEY) {
-		console.log(red("Input a valid PRIVATE_KEY in .env"));
-		process.exit(0);
-	}
+				try {
+					// checking if key is valid
+					PrivateKey.fromString(key).toLegacyString();
+				} catch (error) {
+					console.log(red(`PRIVATE_KEY${id} is not a valid EOS key`));
+					return;
+				}
 
-	try {
-		// checking if key is valid
-		PrivateKey.fromString(PRIVATE_KEY).toLegacyString();
-	} catch (error) {
-		console.log(red("Input a valid PRIVATE_KEY in .env"));
-		process.exit(0);
-	}
+				return { account: v, privKey: key };
+			}
+
+			return null;
+		})
+		.filter(acc => !!acc);
+
+	const { CHECK_INTERVAL } = process.env;
+	const interval = parseInt(CHECK_INTERVAL) || 15;
 
 	console.log(`Fetching Animal configurations`);
 	Configs.animals = await fetchTable(null, "animals", 1);
@@ -526,10 +541,11 @@ async function runTasks() {
 	console.log(`Fetching Tool configurations`);
 	Configs.tools = await fetchTable(null, "toolconfs", 1);
 
+	console.log(`FW Bot running for ${accounts.map(acc => cyan(acc.account)).join(", ")}`);
 	console.log(`Running every ${interval} minutes`);
 	console.log();
 
-	runTasks();
+	runAccounts(accounts);
 
-	setInterval(() => runTasks(), interval * 60e3);
+	setInterval(() => runAccounts(accounts), interval * 60e3);
 })();

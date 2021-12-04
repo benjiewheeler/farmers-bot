@@ -8,6 +8,7 @@ Auto farming bot for Farmers World
 * auto-recover energy
 * auto-repair tools
 * customizable config file
+* support for multiple accounts
 
 ## Requirements
 * a non custodial WAX wallet (one which you own the private keys) 
