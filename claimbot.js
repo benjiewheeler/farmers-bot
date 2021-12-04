@@ -59,6 +59,22 @@ async function waitFor(t) {
 	return new Promise(resolve => setTimeout(() => resolve(), t * 1e3));
 }
 
+function parseRemainingTime(millis) {
+	const diff = Math.floor(millis / 1e3);
+	const hours = Math.floor(diff / 3600);
+	const minutes = Math.floor((diff % 3600) / 60);
+	const seconds = Math.floor((diff % 3600) % 60);
+	const time = [
+		hours > 0 && `${hours.toString().padStart(2, "0")} hours`,
+		minutes > 0 && `${minutes.toString().padStart(2, "0")} minutes`,
+		seconds > 0 && `${seconds.toString().padStart(2, "0")} seconds`,
+	]
+		.filter(n => !!n)
+		.join(", ");
+
+	return time;
+}
+
 async function transact(config) {
 	try {
 		const endpoint = _.sample(Configs.WAXEndpoints);
@@ -140,7 +156,8 @@ async function fetchCrops(account) {
 }
 
 async function fetchTools(account) {
-	return await fetchTable(account, "tools", 2);
+	const tools = await fetchTable(account, "tools", 2);
+	return _.orderBy(tools, "template_id");
 }
 
 async function fetchAccount(account) {
@@ -148,7 +165,8 @@ async function fetchAccount(account) {
 }
 
 async function fetchAnimls(account) {
-	return await fetchTable(account, "animals", 2);
+	const animals = await fetchTable(account, "animals", 2);
+	return _.orderBy(animals, "template_id");
 }
 
 async function fetchFood(account, index = 0) {
@@ -289,7 +307,7 @@ async function repairTools() {
 			console.log(
 				`\tRepairing`,
 				`(${yellow(tool.asset_id)})`,
-				green(`${toolInfo.rarity} ${toolInfo.template_name}`),
+				green(toolInfo.template_name),
 				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
 				magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
 				`(after a ${Math.round(delay)}s delay)`
@@ -412,47 +430,50 @@ async function useTools() {
 	console.log(`Fetching tools for account ${cyan(ACCOUNT_NAME)}`);
 	const tools = await fetchTools(ACCOUNT_NAME);
 
-	const claimables = tools.filter(({ next_availability }) => {
-		const next = new Date(next_availability * 1e3);
-		return next.getTime() < Date.now();
-	});
+	console.log(`Found ${yellow(tools.length)} tools`);
 
-	console.log(`Found ${yellow(tools.length)} tools / ${yellow(claimables.length)} tools ready to claim`);
+	for (let i = 0; i < tools.length; i++) {
+		const tool = tools[i];
+		const toolInfo = Configs.tools.find(t => t.template_id == tool.template_id);
 
-	if (claimables.length > 0) {
-		console.log("Claiming Tools");
-
-		for (let i = 0; i < claimables.length; i++) {
-			const tool = claimables[i];
-			const toolInfo = Configs.tools.find(t => t.template_id == tool.template_id);
-
-			if (toolInfo.durability_consumed >= tool.current_durability) {
-				console.log(
-					`\t${yellow("Warning")} Tool`,
-					`(${yellow(tool.asset_id)})`,
-					green(`${toolInfo.rarity} ${toolInfo.template_name}`),
-					`does not have enough durability`
-				);
-				continue;
-			}
-
-			const delay = _.round(_.random(delayMin, delayMax, true), 2);
-
+		const nextClaim = new Date(tool.next_availability * 1e3);
+		if (nextClaim.getTime() > Date.now()) {
 			console.log(
-				`\tClaiming with`,
+				`\t${yellow("Notice")} Tool`,
 				`(${yellow(tool.asset_id)})`,
-				green(`${toolInfo.rarity} ${toolInfo.template_name}`),
-				`(for ${green(tool.type)})`,
-				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
-				magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
-				`(after a ${Math.round(delay)}s delay)`
+				green(toolInfo.template_name),
+				`still in cooldown period`,
+				yellow(parseRemainingTime(nextClaim.getTime() - Date.now()))
 			);
-
-			const actions = [makeToolClaimAction(ACCOUNT_NAME, tool.asset_id)];
-
-			await waitFor(delay);
-			await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
+			continue;
 		}
+
+		if (toolInfo.durability_consumed >= tool.current_durability) {
+			console.log(
+				`\t${yellow("Warning")} Tool`,
+				`(${yellow(tool.asset_id)})`,
+				green(toolInfo.template_name),
+				`does not have enough durability`,
+				`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`
+			);
+			continue;
+		}
+
+		const delay = _.round(_.random(delayMin, delayMax, true), 2);
+
+		console.log(
+			`\tClaiming with`,
+			`(${yellow(tool.asset_id)})`,
+			green(toolInfo.template_name),
+			`(durability ${yellow(tool.current_durability)} / ${yellow(tool.durability)})`,
+			magenta(`(${_.round((tool.current_durability / tool.durability) * 100, 2)}%)`),
+			`(after a ${Math.round(delay)}s delay)`
+		);
+
+		const actions = [makeToolClaimAction(ACCOUNT_NAME, tool.asset_id)];
+
+		await waitFor(delay);
+		await transact({ account: ACCOUNT_NAME, privKeys: [PRIVATE_KEY], actions });
 	}
 }
 
