@@ -12,7 +12,7 @@ const { TextDecoder, TextEncoder } = require("util");
 require("dotenv").config();
 
 const WAX_ENDPOINTS = _.shuffle([
-	"https://api.wax.greeneosio.com",
+	// "https://api.wax.greeneosio.com",
 	"https://api.waxsweden.org",
 	"https://wax.cryptolions.io",
 	"https://wax.eu.eosamsterdam.net",
@@ -38,6 +38,8 @@ const ANIMAL_FOOD = {
 };
 
 const Configs = {
+	autoWithdraw: false,
+	withdrawThresholds: [],
 	WAXEndpoints: [...WAX_ENDPOINTS],
 	atomicEndpoints: [...ATOMIC_ENDPOINTS],
 	animals: [],
@@ -229,6 +231,15 @@ function makeRecoverAction(account, energy) {
 		name: "recover",
 		authorization: [{ actor: account, permission: "active" }],
 		data: { energy_recovered: energy, owner: account },
+	};
+}
+
+function makeWithdrawAction(account, quantities, fee) {
+	return {
+		account: "farmersworld",
+		name: "withdraw",
+		authorization: [{ actor: account, permission: "active" }],
+		data: { owner: account, quantities, fee },
 	};
 }
 
@@ -477,6 +488,62 @@ async function useTools(account, privKey) {
 	}
 }
 
+async function withdrawTokens(account, privKey) {
+	shuffleEndpoints();
+
+	const { DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+
+	console.log(`Fetching config table`);
+	const [config] = await fetchTable(null, "config", 1);
+
+	const { min_fee, fee } = config;
+
+	if (fee > min_fee) {
+		console.log(
+			`${yellow("Warning")}`,
+			`Withdraw fee ${magenta(`(${fee}%)`)} is larger than the minimum fee ${magenta(`(${min_fee}%)`)}`,
+			`aborting until next round`
+		);
+		return;
+	}
+
+	console.log(`Fetching account ${cyan(account)}`);
+	const [accountInfo] = await fetchAccount(account);
+
+	if (!accountInfo) {
+		console.log(`${red("Error")} Account ${cyan(account)} not found`);
+		return;
+	}
+
+	const { balances } = accountInfo;
+
+	const withdrawables = balances
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }))
+		.filter(token => {
+			const threshold = Configs.withdrawThresholds.find(t => t.symbol == token.symbol);
+			return threshold && token.amount >= threshold.amount;
+		})
+		.map(
+			([amount, symbol]) =>
+				`${amount.toLocaleString("en", {
+					useGrouping: false,
+					minimumFractionDigits: 4,
+					maximumFractionDigits: 4,
+				})} ${symbol}`
+		);
+
+	const delay = _.round(_.random(delayMin, delayMax, true), 2);
+
+	console.log(`\tWithdrawing ${yellow(withdrawables.join(", "))}`, `(after a ${Math.round(delay)}s delay)`);
+	const actions = [makeWithdrawAction(account, withdrawables, fee)];
+
+	await waitFor(delay);
+	await transact({ account, privKeys: [privKey], actions });
+}
+
 async function runTasks(account, privKey) {
 	await recoverEnergy(account, privKey);
 	console.log(); // just for clarity
@@ -491,6 +558,9 @@ async function runTasks(account, privKey) {
 	console.log(); // just for clarity
 
 	await feedAnimals(account, privKey);
+	console.log(); // just for clarity
+
+	await withdrawTokens(account, privKey);
 	console.log(); // just for clarity
 }
 
@@ -529,11 +599,18 @@ async function runAccounts(accounts) {
 		})
 		.filter(acc => !!acc);
 
-	const { CHECK_INTERVAL } = process.env;
+	const { CHECK_INTERVAL, AUTO_WITHDRAW, WITHDRAW_THRESHOLD } = process.env;
 	const interval = parseInt(CHECK_INTERVAL) || 15;
 
+	Configs.autoWithdraw = AUTO_WITHDRAW == 1;
+	Configs.withdrawThresholds = WITHDRAW_THRESHOLD.split(",")
+		.map(t => t.trim())
+		.filter(t => t.length)
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+
 	console.log(`Fetching Animal configurations`);
-	Configs.animals = await fetchTable(null, "animals", 1);
+	Configs.animals = await fetchTable(null, "anmconf", 1);
 	Configs.animals
 		.filter(({ consumed_quantity }) => consumed_quantity > 0)
 		.forEach(({ template_id, consumed_card }) => (ANIMAL_FOOD[template_id] = consumed_card));
