@@ -530,6 +530,10 @@ async function withdrawTokens(account, privKey) {
 			const threshold = Configs.withdrawThresholds.find(t => t.symbol == token.symbol);
 			return threshold && token.amount >= threshold.amount;
 		})
+		.map(({ amount, symbol }) => {
+			const max = Configs.withdrawThresholds.find(t => t.symbol == token.symbol);
+			return { amount: Math.min(amount, max.amount), symbol };
+		})
 		.map(
 			({ amount, symbol }) =>
 				`${amount.toLocaleString("en", {
