@@ -489,6 +489,10 @@ async function useTools(account, privKey) {
 }
 
 async function withdrawTokens(account, privKey) {
+	if (!Configs.autoWithdraw) {
+		return;
+	}
+
 	shuffleEndpoints();
 
 	const { DELAY_MIN, DELAY_MAX } = process.env;
@@ -527,13 +531,18 @@ async function withdrawTokens(account, privKey) {
 			return threshold && token.amount >= threshold.amount;
 		})
 		.map(
-			([amount, symbol]) =>
+			({ amount, symbol }) =>
 				`${amount.toLocaleString("en", {
 					useGrouping: false,
 					minimumFractionDigits: 4,
 					maximumFractionDigits: 4,
 				})} ${symbol}`
 		);
+
+	if (!withdrawables.length) {
+		console.log(`${yellow("Warning")}`, `Not enough tokens to auto-withdraw`, yellow(balances.join(", ")));
+		return;
+	}
 
 	const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
