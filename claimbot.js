@@ -631,7 +631,7 @@ async function depositTokens(account, privKey) {
 		);
 
 	if (!depositables.length) {
-		console.log(`${cyan("Info")}`, `No token deposit needed`, yellow(gameBalances.join(", ")));
+		console.log(`${cyan("Info")}`, `No token deposit is possible`, yellow(gameBalances.join(", ")));
 		return;
 	}
 
