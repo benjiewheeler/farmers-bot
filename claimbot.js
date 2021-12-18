@@ -607,16 +607,15 @@ async function depositTokens(account, privKey) {
 			const threshold = Configs.depositThresholds.find(t => t.symbol == token.symbol);
 			return threshold && token.amount < threshold.amount;
 		})
+		.map(({ symbol }) => {
+			return { symbol: `FW${symbol.slice(0, 1)}` };
+		})
+		.map(({ symbol }) => {
+			return accountBalances.find(t => t.symbol == symbol);
+		})
 		.map(({ amount, symbol }) => {
 			const max = Configs.maxDeposit.find(t => t.symbol == symbol);
 			return { amount: Math.min(amount, (max && max.amount) || Infinity), symbol };
-		})
-		.map(({ amount, symbol }) => {
-			return { amount, symbol: `FW${symbol.slice(0, 1)}` };
-		})
-		.map(({ amount, symbol }) => {
-			const max = accountBalances.find(t => t.symbol == symbol);
-			return { amount: Math.min(amount, (max && max.amount) || 0), symbol };
 		})
 		.filter(({ amount }) => {
 			return amount > 0;
