@@ -40,6 +40,7 @@ const ANIMAL_FOOD = {
 const Configs = {
 	autoWithdraw: false,
 	withdrawThresholds: [],
+	maxWithdraw: [],
 	WAXEndpoints: [...WAX_ENDPOINTS],
 	atomicEndpoints: [...ATOMIC_ENDPOINTS],
 	animals: [],
@@ -531,8 +532,8 @@ async function withdrawTokens(account, privKey) {
 			return threshold && token.amount >= threshold.amount;
 		})
 		.map(({ amount, symbol }) => {
-			const max = Configs.withdrawThresholds.find(t => t.symbol == token.symbol);
-			return { amount: Math.min(amount, max.amount), symbol };
+			const max = Configs.maxWithdraw.find(t => t.symbol == symbol);
+			return { amount: Math.min(amount, (max && max.amount) || Infinity), symbol };
 		})
 		.map(
 			({ amount, symbol }) =>
@@ -612,11 +613,17 @@ async function runAccounts(accounts) {
 		})
 		.filter(acc => !!acc);
 
-	const { CHECK_INTERVAL, AUTO_WITHDRAW, WITHDRAW_THRESHOLD } = process.env;
+	const { CHECK_INTERVAL, AUTO_WITHDRAW, WITHDRAW_THRESHOLD, MAX_WITHDRAW } = process.env;
 	const interval = parseInt(CHECK_INTERVAL) || 15;
 
 	Configs.autoWithdraw = AUTO_WITHDRAW == 1;
 	Configs.withdrawThresholds = WITHDRAW_THRESHOLD.split(",")
+		.map(t => t.trim())
+		.filter(t => t.length)
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+
+	Configs.maxWithdraw = MAX_WITHDRAW.split(",")
 		.map(t => t.trim())
 		.filter(t => t.length)
 		.map(t => t.split(/\s+/gi))
