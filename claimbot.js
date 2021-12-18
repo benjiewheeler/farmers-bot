@@ -41,6 +41,11 @@ const Configs = {
 	autoWithdraw: false,
 	withdrawThresholds: [],
 	maxWithdraw: [],
+
+	autoDeposit: false,
+	depositThresholds: [],
+	maxDeposit: [],
+
 	WAXEndpoints: [...WAX_ENDPOINTS],
 	atomicEndpoints: [...ATOMIC_ENDPOINTS],
 	animals: [],
@@ -120,7 +125,7 @@ async function transact(config) {
 	}
 }
 
-async function fetchTable(account, table, tableIndex, index = 0) {
+async function fetchTable(contract, table, scope, bounds, tableIndex, index = 0) {
 	if (index >= Configs.WAXEndpoints.length) {
 		return [];
 	}
@@ -132,11 +137,11 @@ async function fetchTable(account, table, tableIndex, index = 0) {
 		const data = await Promise.race([
 			rpc.get_table_rows({
 				json: true,
-				code: "farmersworld",
-				scope: "farmersworld",
+				code: contract,
+				scope: scope,
 				table: table,
-				lower_bound: account,
-				upper_bound: account,
+				lower_bound: bounds,
+				upper_bound: bounds,
 				index_position: tableIndex,
 				key_type: "i64",
 				limit: 100,
@@ -150,25 +155,25 @@ async function fetchTable(account, table, tableIndex, index = 0) {
 
 		return data.rows;
 	} catch (error) {
-		return await fetchTable(account, table, tableIndex, index + 1);
+		return await fetchTable(contract, table, scope, bounds, tableIndex, index + 1);
 	}
 }
 
 async function fetchCrops(account) {
-	return await fetchTable(account, "crops", 2);
+	return await fetchTable("farmersworld", "crops", "farmersworld", account, 2);
 }
 
 async function fetchTools(account) {
-	const tools = await fetchTable(account, "tools", 2);
+	const tools = await fetchTable("farmersworld", "tools", "farmersworld", account, 2);
 	return _.orderBy(tools, "template_id");
 }
 
 async function fetchAccount(account) {
-	return await fetchTable(account, "accounts", 1);
+	return await fetchTable("farmersworld", "accounts", "farmersworld", account, 1);
 }
 
 async function fetchAnimls(account) {
-	const animals = await fetchTable(account, "animals", 2);
+	const animals = await fetchTable("farmersworld", "animals", "farmersworld", account, 2);
 	return _.orderBy(animals, "template_id");
 }
 
@@ -241,6 +246,15 @@ function makeWithdrawAction(account, quantities, fee) {
 		name: "withdraw",
 		authorization: [{ actor: account, permission: "active" }],
 		data: { owner: account, quantities, fee },
+	};
+}
+
+function makeDepositAction(account, quantities) {
+	return {
+		account: "farmerstoken",
+		name: "transfers",
+		authorization: [{ actor: account, permission: "active" }],
+		data: { from: account, to: "farmersworld", quantities, memo: "deposit" },
 	};
 }
 
@@ -501,7 +515,7 @@ async function withdrawTokens(account, privKey) {
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
 	console.log(`Fetching config table`);
-	const [config] = await fetchTable(null, "config", 1);
+	const [config] = await fetchTable("farmersworld", "config", "farmersworld", null, 1);
 
 	const { min_fee, fee } = config;
 
@@ -558,7 +572,82 @@ async function withdrawTokens(account, privKey) {
 	await transact({ account, privKeys: [privKey], actions });
 }
 
+async function depositTokens(account, privKey) {
+	if (!Configs.autoDeposit) {
+		return;
+	}
+
+	shuffleEndpoints();
+
+	const { DELAY_MIN, DELAY_MAX } = process.env;
+	const delayMin = parseFloat(DELAY_MIN) || 4;
+	const delayMax = parseFloat(DELAY_MAX) || 10;
+
+	console.log(`Fetching account ${cyan(account)}`);
+	const [accountInfo] = await fetchAccount(account);
+
+	if (!accountInfo) {
+		console.log(`${red("Error")} Account ${cyan(account)} not found`);
+		return;
+	}
+
+	console.log(`Fetching balances for account ${cyan(account)}`);
+	const rows = await fetchTable("farmerstoken", "accounts", account, null, 1);
+	const rawBalances = rows.map(r => r.balance);
+	const accountBalances = rawBalances
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+
+	const { balances: gameBalances } = accountInfo;
+
+	const depositables = gameBalances
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }))
+		.filter(token => {
+			const threshold = Configs.depositThresholds.find(t => t.symbol == token.symbol);
+			return threshold && token.amount < threshold.amount;
+		})
+		.map(({ amount, symbol }) => {
+			const max = Configs.maxDeposit.find(t => t.symbol == symbol);
+			return { amount: Math.min(amount, (max && max.amount) || Infinity), symbol };
+		})
+		.map(({ amount, symbol }) => {
+			return { amount, symbol: `FW${symbol.slice(0, 1)}` };
+		})
+		.map(({ amount, symbol }) => {
+			const max = accountBalances.find(t => t.symbol == symbol);
+			return { amount: Math.min(amount, (max && max.amount) || 0), symbol };
+		})
+		.filter(({ amount }) => {
+			return amount > 0;
+		})
+		.map(
+			({ amount, symbol }) =>
+				`${amount.toLocaleString("en", {
+					useGrouping: false,
+					minimumFractionDigits: 4,
+					maximumFractionDigits: 4,
+				})} ${symbol}`
+		);
+
+	if (!depositables.length) {
+		console.log(`${cyan("Info")}`, `No token deposit needed`, yellow(gameBalances.join(", ")));
+		return;
+	}
+
+	const delay = _.round(_.random(delayMin, delayMax, true), 2);
+
+	console.log(`\tDepositing ${yellow(depositables.join(", "))}`, `(after a ${Math.round(delay)}s delay)`);
+	const actions = [makeDepositAction(account, depositables)];
+
+	await waitFor(delay);
+	await transact({ account, privKeys: [privKey], actions });
+}
+
 async function runTasks(account, privKey) {
+	await depositTokens(account, privKey);
+	console.log(); // just for clarity
+
 	await recoverEnergy(account, privKey);
 	console.log(); // just for clarity
 
@@ -613,7 +702,10 @@ async function runAccounts(accounts) {
 		})
 		.filter(acc => !!acc);
 
-	const { CHECK_INTERVAL, AUTO_WITHDRAW, WITHDRAW_THRESHOLD, MAX_WITHDRAW } = process.env;
+	const { CHECK_INTERVAL } = process.env;
+	const { AUTO_WITHDRAW, WITHDRAW_THRESHOLD, MAX_WITHDRAW } = process.env;
+	const { AUTO_DEPOSIT, DEPOSIT_THRESHOLD, MAX_DEPOSIT } = process.env;
+
 	const interval = parseInt(CHECK_INTERVAL) || 15;
 
 	Configs.autoWithdraw = AUTO_WITHDRAW == 1;
@@ -629,14 +721,27 @@ async function runAccounts(accounts) {
 		.map(t => t.split(/\s+/gi))
 		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
 
+	Configs.autoDeposit = AUTO_DEPOSIT == 1;
+	Configs.depositThresholds = DEPOSIT_THRESHOLD.split(",")
+		.map(t => t.trim())
+		.filter(t => t.length)
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+
+	Configs.maxDeposit = MAX_DEPOSIT.split(",")
+		.map(t => t.trim())
+		.filter(t => t.length)
+		.map(t => t.split(/\s+/gi))
+		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+
 	console.log(`Fetching Animal configurations`);
-	Configs.animals = await fetchTable(null, "anmconf", 1);
+	Configs.animals = await fetchTable("farmersworld", "anmconf", "farmersworld", null, 1);
 	Configs.animals
 		.filter(({ consumed_quantity }) => consumed_quantity > 0)
 		.forEach(({ template_id, consumed_card }) => (ANIMAL_FOOD[template_id] = consumed_card));
 
 	console.log(`Fetching Tool configurations`);
-	Configs.tools = await fetchTable(null, "toolconfs", 1);
+	Configs.tools = await fetchTable("farmersworld", "toolconfs", "farmersworld", null, 1);
 
 	console.log(`FW Bot running for ${accounts.map(acc => cyan(acc.account)).join(", ")}`);
 	console.log(`Running every ${interval} minutes`);
