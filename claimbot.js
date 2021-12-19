@@ -83,7 +83,17 @@ function parseRemainingTime(millis) {
 	return time;
 }
 
+function logTask(...message) {
+	console.log(`${yellow("Task")}`, ...message);
+	console.log("-".repeat(32));
+}
+
 async function transact(config) {
+	const { DEV_MODE } = process.env;
+	if (DEV_MODE == 1) {
+		return;
+	}
+
 	try {
 		const endpoint = _.sample(Configs.WAXEndpoints);
 		const rpc = new JsonRpc(endpoint, { fetch });
@@ -165,7 +175,7 @@ async function fetchCrops(account) {
 
 async function fetchTools(account) {
 	const tools = await fetchTable("farmersworld", "tools", "farmersworld", account, 2);
-	return _.orderBy(tools, "template_id");
+	return _.orderBy(tools, ["template_id", "next_availability"], ["asc", "asc"]);
 }
 
 async function fetchAccount(account) {
@@ -267,6 +277,7 @@ async function recoverEnergy(account, privKey) {
 	const maxConsumption = parseFloat(MAX_FOOD_CONSUMPTION) || 100;
 	const threshold = parseFloat(RECOVER_THRESHOLD) || 50;
 
+	logTask(`Recovering Energy`);
 	console.log(`Fetching account ${cyan(account)}`);
 	const [accountInfo] = await fetchAccount(account);
 
@@ -278,29 +289,37 @@ async function recoverEnergy(account, privKey) {
 	const { energy, max_energy, balances } = accountInfo;
 	const percentage = 100 * (energy / max_energy);
 
-	if (percentage < threshold) {
-		const foodBalance = parseFloat(balances.find(b => b.includes("FOOD"))) || 0;
-
-		if (foodBalance < 0.2) {
-			console.log(`${yellow("Warning")} Account ${cyan(account)} doesn't have food to recover energy`);
-			return;
-		}
-
-		const energyNeeded = Math.min(max_energy - energy, Math.floor(Math.min(maxConsumption, foodBalance) * 5));
-		const delay = _.round(_.random(delayMin, delayMax, true), 2);
-
+	if (percentage > threshold) {
 		console.log(
-			`\tRecovering ${yellow(energyNeeded)} energy`,
-			`by consuming ${yellow(energyNeeded / 5)} FOOD`,
+			`${yellow("Info")}`,
+			`Account ${cyan(account)} doesn't need to recover`,
 			`(energy ${yellow(energy)} / ${yellow(max_energy)})`,
-			magenta(`(${_.round((energy / max_energy) * 100, 2)}%)`),
-			`(after a ${Math.round(delay)}s delay)`
+			magenta(`(${_.round((energy / max_energy) * 100, 2)}%)`)
 		);
-		const actions = [makeRecoverAction(account, energyNeeded)];
-
-		await waitFor(delay);
-		await transact({ account, privKeys: [privKey], actions });
+		return;
 	}
+
+	const foodBalance = parseFloat(balances.find(b => b.includes("FOOD"))) || 0;
+
+	if (foodBalance < 0.2) {
+		console.log(`${yellow("Warning")} Account ${cyan(account)} doesn't have food to recover energy`);
+		return;
+	}
+
+	const energyNeeded = Math.min(max_energy - energy, Math.floor(Math.min(maxConsumption, foodBalance) * 5));
+	const delay = _.round(_.random(delayMin, delayMax, true), 2);
+
+	console.log(
+		`\tRecovering ${yellow(energyNeeded)} energy`,
+		`by consuming ${yellow(energyNeeded / 5)} FOOD`,
+		`(energy ${yellow(energy)} / ${yellow(max_energy)})`,
+		magenta(`(${_.round((energy / max_energy) * 100, 2)}%)`),
+		`(after a ${Math.round(delay)}s delay)`
+	);
+	const actions = [makeRecoverAction(account, energyNeeded)];
+
+	await waitFor(delay);
+	await transact({ account, privKeys: [privKey], actions });
 }
 
 async function repairTools(account, privKey) {
@@ -311,6 +330,7 @@ async function repairTools(account, privKey) {
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 	const threshold = parseFloat(REPAIR_THRESHOLD) || 50;
 
+	logTask(`Repairing Tools`);
 	console.log(`Fetching tools for account ${cyan(account)}`);
 	const tools = await fetchTools(account);
 
@@ -353,6 +373,7 @@ async function feedAnimals(account, privKey) {
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
+	logTask(`Feeding Animals`);
 	console.log(`Fetching animals for account ${cyan(account)}`);
 	const animals = await fetchAnimls(account);
 
@@ -414,6 +435,7 @@ async function claimCrops(account, privKey) {
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
+	logTask(`Claiming Crops`);
 	console.log(`Fetching crops for account ${cyan(account)}`);
 	const crops = await fetchCrops(account);
 
@@ -453,6 +475,7 @@ async function useTools(account, privKey) {
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
+	logTask(`Using Tools`);
 	console.log(`Fetching tools for account ${cyan(account)}`);
 	const tools = await fetchTools(account);
 
@@ -514,6 +537,7 @@ async function withdrawTokens(account, privKey) {
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
+	logTask(`Withdrawing Tokens`);
 	console.log(`Fetching config table`);
 	const [config] = await fetchTable("farmersworld", "config", "farmersworld", null, 1);
 
@@ -522,7 +546,7 @@ async function withdrawTokens(account, privKey) {
 	if (fee > min_fee) {
 		console.log(
 			`${yellow("Warning")}`,
-			`Withdraw fee ${magenta(`(${fee}%)`)} is larger than the minimum fee ${magenta(`(${min_fee}%)`)}`,
+			`Withdraw fee ${magenta(`(${fee}%)`)} is greater than the minimum fee ${magenta(`(${min_fee}%)`)}`,
 			`aborting until next round`
 		);
 		return;
@@ -583,6 +607,7 @@ async function depositTokens(account, privKey) {
 	const delayMin = parseFloat(DELAY_MIN) || 4;
 	const delayMax = parseFloat(DELAY_MAX) || 10;
 
+	logTask(`Depositing Tokens`);
 	console.log(`Fetching account ${cyan(account)}`);
 	const [accountInfo] = await fetchAccount(account);
 
@@ -593,32 +618,36 @@ async function depositTokens(account, privKey) {
 
 	console.log(`Fetching balances for account ${cyan(account)}`);
 	const rows = await fetchTable("farmerstoken", "accounts", account, null, 1);
-	const rawBalances = rows.map(r => r.balance);
-	const accountBalances = rawBalances
-		.map(t => t.split(/\s+/gi))
-		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }));
+	const rawAccountBalances = rows.map(r => r.balance);
+	const { balances: rawGameBalances } = accountInfo;
 
-	const { balances: gameBalances } = accountInfo;
+	const [accountBalances, gameBalances] = [rawAccountBalances, rawGameBalances].map(bals =>
+		bals.map(t => t.split(/\s+/gi)).map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }))
+	);
 
-	const depositables = gameBalances
-		.map(t => t.split(/\s+/gi))
-		.map(([amount, symbol]) => ({ amount: parseFloat(amount), symbol }))
-		.filter(token => {
-			const threshold = Configs.depositThresholds.find(t => t.symbol == token.symbol);
-			return threshold && token.amount < threshold.amount;
-		})
-		.map(({ symbol }) => {
-			return { symbol: `FW${symbol.slice(0, 1)}` };
-		})
-		.map(({ symbol }) => {
-			return accountBalances.find(t => t.symbol == symbol);
-		})
+	const meetThreshold = gameBalances.filter(token => {
+		const threshold = Configs.depositThresholds.find(t => t.symbol == token.symbol);
+		return threshold && token.amount < threshold.amount;
+	});
+
+	if (!meetThreshold.length) {
+		console.log(`${cyan("Info")}`, `No token deposit is needed`, yellow(rawGameBalances.join(", ")));
+		return;
+	}
+
+	const elligibleTokens = meetThreshold
+		.map(({ symbol }) => accountBalances.find(t => t.symbol == `FW${symbol.slice(0, 1)}`))
+		.filter(({ amount }) => amount > 0);
+
+	if (!elligibleTokens.length) {
+		console.log(`${yellow("Warning")}`, `No token deposit is possible`, yellow(rawAccountBalances.join(", ")));
+		return;
+	}
+
+	const depositables = elligibleTokens
 		.map(({ amount, symbol }) => {
 			const max = Configs.maxDeposit.find(t => t.symbol == symbol);
 			return { amount: Math.min(amount, (max && max.amount) || Infinity), symbol };
-		})
-		.filter(({ amount }) => {
-			return amount > 0;
 		})
 		.map(
 			({ amount, symbol }) =>
@@ -628,11 +657,6 @@ async function depositTokens(account, privKey) {
 					maximumFractionDigits: 4,
 				})} ${symbol}`
 		);
-
-	if (!depositables.length) {
-		console.log(`${cyan("Info")}`, `No token deposit is possible`, yellow(gameBalances.join(", ")));
-		return;
-	}
 
 	const delay = _.round(_.random(delayMin, delayMax, true), 2);
 
