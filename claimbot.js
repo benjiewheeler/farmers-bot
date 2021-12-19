@@ -637,6 +637,7 @@ async function depositTokens(account, privKey) {
 
 	const elligibleTokens = meetThreshold
 		.map(({ symbol }) => accountBalances.find(t => t.symbol == `FW${symbol.slice(0, 1)}`))
+		.filter(b => !!b)
 		.filter(({ amount }) => amount > 0);
 
 	if (!elligibleTokens.length) {
