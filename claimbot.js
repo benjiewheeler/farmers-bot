@@ -6,17 +6,23 @@ const { JsSignatureProvider } = require("eosjs/dist/eosjs-jssig");
 const { PrivateKey } = require("eosjs/dist/eosjs-key-conversions");
 const { dateToTimePointSec, timePointSecToDate } = require("eosjs/dist/eosjs-serialize");
 const _ = require("lodash");
-const fetch = require("node-fetch");
+const nodeFetch = require("node-fetch");
 const { TextDecoder, TextEncoder } = require("util");
 
 require("dotenv").config();
 
+const fetch = (url, payload) =>
+	nodeFetch(url, {
+		...payload,
+		headers: { "User-Agent": "farmersbot/1.0.0" },
+	});
+
 const WAX_ENDPOINTS = _.shuffle([
-	// "https://api.wax.greeneosio.com",
+	"https://api.wax.greeneosio.com",
 	"https://api.waxsweden.org",
 	"https://wax.cryptolions.io",
 	"https://wax.eu.eosamsterdam.net",
-	"https://api-wax.eosarabia.net",
+	// "https://api-wax.eosarabia.net",
 	"https://wax.greymass.com",
 	"https://wax.pink.gg",
 ]);
